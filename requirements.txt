@@ -1,0 +1,9 @@
+streamlit
+supabase
+google-generativeai
+edge-tts
+moviepy==1.0.3
+ultralytics
+pillow
+python-dotenv
+
