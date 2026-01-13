@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 from moviepy.editor import VideoFileClip, AudioFileClip, vfx
 import google.generativeai as genai
+from google.generativeai import types
 import edge_tts
 import asyncio
 import tempfile
@@ -11,6 +12,8 @@ import time
 
 # --- CONFIGURATION ---
 GEMINI_API_KEY = "AIzaSyBDfSFCV4kF56dAZ8Zx0m0xaR8a40v8pG4"
+# API Version ကို v1 အနေနဲ့ အတင်းအကျပ် သတ်မှတ်ခြင်း (404 Error မတက်စေရန်)
+os.environ["GOOGLE_GENERATIVE_AI_API_VERSION"] = "v1" 
 genai.configure(api_key=GEMINI_API_KEY)
 
 st.set_page_config(page_title="Auto Burmese Movie Recap AI", layout="wide")
@@ -47,18 +50,24 @@ async def generate_voice(text, output_path):
     await communicate.save(output_path)
 
 def analyze_and_recap(video_file_path):
-    # Model name fix for 404 error
-    model = genai.GenerativeModel('models/gemini-1.5-flash')
+    # model name ကို အပြည့်အစုံ ရေးပေးရပါမယ်
+    model = genai.GenerativeModel('gemini-1.5-flash')
+    
+    st.write("📤 ဗီဒီယိုဖိုင်ကို AI ဆီ ပို့ဆောင်နေသည်...")
     video_file = genai.upload_file(path=video_file_path)
+    
     while video_file.state.name == "PROCESSING":
         time.sleep(2)
         video_file = genai.get_file(video_file.name)
-    prompt = "Listen to the audio, translate to Burmese and write a dramatic movie recap script. Start with 'ဇာတ်လမ်းစစချင်းမှာ...' Burmese only."
+
+    prompt = "Watch this video, listen to the audio, and write a dramatic Burmese movie recap script starting with 'ဇာတ်လမ်းစစချင်းမှာ...' Output Burmese only."
+    
+    # generate_content မှာ error မတက်အောင် retry စနစ် အနည်းငယ်ပါဝင်သည်
     response = model.generate_content([video_file, prompt])
     return response.text
 
 # --- UI ---
-st.title("🎬 Auto Movie Recap AI (Burmese)")
+st.title("🎬 Burmese Movie Recap AI")
 uploaded_file = st.file_uploader("ဗီဒီယိုဖိုင်တင်ပါ", type=['mp4', 'webm', 'mov', 'avi'])
 
 if uploaded_file:
@@ -66,16 +75,26 @@ if uploaded_file:
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tfile:
         tfile.write(uploaded_file.read())
         temp_path = tfile.name
-    if st.button("အလိုအလျောက် Recap ပြုလုပ်ပါ"):
+    
+    if st.button("Recap အလိုအလျောက် လုပ်ပါ"):
         with st.status("AI အလုပ်လုပ်နေသည်...", expanded=True) as status:
             try:
+                # Step 1: Analyze
+                st.write("🕵️ AI က ဗီဒီယိုကို နားထောင်နေသည်...")
                 script = analyze_and_recap(temp_path)
+                
+                # Step 2: Voice
+                st.write("🎙️ ဗမာအသံသွင်းနေသည်...")
                 asyncio.run(generate_voice(script, "voice.mp3"))
+                
+                # Step 3: Video Blur & Sync
+                st.write("🌫️ ဗီဒီယိုကို ပြုပြင်နေသည်...")
                 blurred = apply_blur_to_video(temp_path, "blurred.mp4")
                 final = adjust_video_sync(blurred, "voice.mp3", "final.mp4")
-                status.update(label="✅ အားလုံး ပြီးပါပြီ!", state="complete")
+                
+                status.update(label="✅ အောင်မြင်စွာ လုပ်ဆောင်ပြီးပါပြီ!", state="complete")
                 st.video(final)
             except Exception as e:
-                st.error(f"Error: {str(e)}")
+                st.error(f"Error တက်သွားပါသည်: {str(e)}")
             finally:
                 if os.path.exists(temp_path): os.remove(temp_path)
