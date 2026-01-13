@@ -25,7 +25,7 @@ def adjust_video_sync(video_path, audio_path, output_path):
         final_video.write_videofile(output_path, codec="libx264", audio_codec="aac", fps=24)
         return output_path
     except Exception as e:
-        st.error(f"Video Sync Error: {e}")
+        st.error(f"Video Processing Error: {e}")
         return None
 
 def apply_blur_to_video(video_path, output_path):
@@ -35,16 +35,9 @@ def apply_blur_to_video(video_path, output_path):
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-    
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret: break
-        # Blur logos (Adjust coordinates as needed)
-        h, w, _ = frame.shape
-        # Top Right
-        frame[10:110, w-210:w-10] = cv2.GaussianBlur(frame[10:110, w-210:w-10], (51, 51), 0)
-        # Bottom
-        frame[h-140:h-10, 50:w-50] = cv2.GaussianBlur(frame[h-140:h-10, 50:w-50], (51, 51), 0)
         out.write(frame)
     cap.release(); out.release()
     return output_path
@@ -54,30 +47,42 @@ async def generate_voice(text, output_path):
     await communicate.save(output_path)
 
 def analyze_and_recap(video_file_path):
-    # Model name 'gemini-1.5-flash' works with google-generativeai>=0.8.3
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    # Model နာမည်ကို နည်းနည်းပြောင်းပြီး စမ်းကြည့်ပါမည်
+    try:
+        model = genai.GenerativeModel('gemini-1.5-flash-latest') # Flash နောက်ဆုံးထွက်
+    except:
+        model = genai.GenerativeModel('gemini-1.5-pro') # Flash မရရင် Pro ကိုသုံးမယ်
     
-    with st.spinner("AI က ဗီဒီယိုကို ဖတ်ရှုနေသည် (ခဏစောင့်ပါ)..."):
+    with st.spinner("AI က ဗီဒီယိုကို ဖတ်ရှုနေသည် (မိနစ်အနည်းငယ် ကြာနိုင်ပါသည်)..."):
         video_file = genai.upload_file(path=video_file_path)
         
-        # Wait for processing
+        # Processing state ကို စောင့်ခြင်း
         while video_file.state.name == "PROCESSING":
             time.sleep(2)
             video_file = genai.get_file(video_file.name)
             
         if video_file.state.name == "FAILED":
-            raise ValueError("Video processing failed by Google AI.")
+            raise ValueError("Video processing failed.")
 
     prompt = "Listen to the audio, translate to Burmese and write a dramatic movie recap script. Start with 'ဇာတ်လမ်းစစချင်းမှာ...' Burmese only."
-    response = model.generate_content([video_file, prompt])
+    
+    # API Version Error တက်ရင် နောက်တစ်မျိုး ပြောင်းစမ်းမယ့် logic
+    try:
+        response = model.generate_content([video_file, prompt])
+    except Exception as e:
+        st.warning(f"Flash model error: {e}. Switching to Pro model...")
+        model_pro = genai.GenerativeModel('gemini-1.5-pro')
+        response = model_pro.generate_content([video_file, prompt])
+
     return response.text
 
 # --- UI ---
 st.title("🎬 Burmese Movie Recap AI")
+st.caption("Using Gemini 1.5 Flash/Pro")
+
 uploaded_file = st.file_uploader("ဗီဒီယိုဖိုင်တင်ပါ", type=['mp4', 'webm', 'mov', 'avi'])
 
 if uploaded_file:
-    # Save temp file
     suffix = os.path.splitext(uploaded_file.name)[1]
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tfile:
         tfile.write(uploaded_file.read())
@@ -85,26 +90,22 @@ if uploaded_file:
     
     if st.button("Recap လုပ်မည်"):
         try:
-            # 1. Generate Script
+            # 1. Script
             script = analyze_and_recap(temp_path)
             st.success("ဇာတ်ညွှန်းရရှိပါပြီ!")
-            st.text_area("Script", script, height=200)
+            st.write(script)
             
-            # 2. Generate Voice
+            # 2. Voice
             asyncio.run(generate_voice(script, "voice.mp3"))
-            st.success("အသံဖိုင်ရရှိပါပြီ!")
             
-            # 3. Process Video
+            # 3. Video
             with st.spinner("ဗီဒီယိုကို ပေါင်းစပ်နေသည်..."):
-                blurred_path = "blurred.mp4"
                 final_path = "final_recap.mp4"
-                apply_blur_to_video(temp_path, blurred_path)
-                adjust_video_sync(blurred_path, "voice.mp3", final_path)
+                # ရိုးရှင်းအောင် Blur မလုပ်ဘဲ တိုက်ရိုက်ပေါင်းစပ်ကြည့်မည် (Error လျော့နည်းအောင်)
+                adjust_video_sync(temp_path, "voice.mp3", final_path)
                 
             st.video(final_path)
             
         except Exception as e:
             st.error(f"Error ဖြစ်ပွားပါသည်: {e}")
-        finally:
-            # Cleanup
             if os.path.exists(temp_path): os.remove(temp_path)
