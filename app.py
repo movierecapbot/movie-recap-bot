@@ -1,87 +1,71 @@
 import streamlit as st
-import os
-import google.generativeai as genai
+from google import genai
 import edge_tts
 import asyncio
 import tempfile
+import os
 import time
-from moviepy.editor import VideoFileClip, AudioFileClip, vfx
 
-# --- INITIAL SETUP ---
-st.set_page_config(page_title="Burmese Movie Recap AI", layout="wide")
-st.title("🎬 Burmese Movie Recap AI")
+# --- CONFIG ---
+st.set_page_config(page_title="Burmese Movie Recap AI (Gemini 3)", layout="wide")
+st.title("🎬 Burmese Movie Recap AI (Gemini 3)")
 
-# Get API Key from Secrets
-if "GEMINI_API_KEY" in st.secrets:
-    GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
-    # ဤစာကြောင်းသည် v1beta error ကို ကျော်ဖြတ်ရန် အဓိကဖြစ်သည်
-    os.environ["GOOGLE_GENERATIVE_AI_API_VERSION"] = "v1"
-    genai.configure(api_key=GEMINI_API_KEY)
-else:
-    st.error("Secrets ထဲမှာ GEMINI_API_KEY မရှိသေးပါ။")
+# Get API Key
+GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
+
+if not GEMINI_API_KEY:
+    st.error("Secrets ထဲမှာ GEMINI_API_KEY ထည့်ပေးပါ။")
     st.stop()
 
-# --- FUNCTIONS ---
-def analyze_video_v1(video_path):
-    try:
-        # v1 stable လမ်းကြောင်းမှ ခေါ်ယူခြင်း
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        
-        with st.spinner("AI က ဗီဒီယိုကို စတင်စစ်ဆေးနေပါသည်..."):
-            video_file = genai.upload_file(path=video_path)
-            
-            while video_file.state.name == "PROCESSING":
-                time.sleep(2)
-                video_file = genai.get_file(video_file.name)
-            
-            if video_file.state.name == "FAILED":
-                return "AI Error: Video upload failed."
+# Gemini 3 Client Setup
+client = genai.Client(api_key=GEMINI_API_KEY)
 
-            prompt = "Write a dramatic Burmese movie recap script for this video. Start with 'ဇာတ်လမ်းစစချင်းမှာ...' Burmese language only."
-            response = model.generate_content([video_file, prompt])
+async def generate_recap(video_path):
+    try:
+        # Video Upload
+        with st.spinner("AI ဆီ ဗီဒီယို ပေးပို့နေသည်..."):
+            with open(video_path, "rb") as f:
+                # Gemini 3 တွင် gemini-3-flash-preview ကို သုံးရပါမည်
+                response = client.models.generate_content(
+                    model="gemini-3-flash-preview",
+                    contents=[
+                        "Write a dramatic Burmese movie recap script for this video. Start with 'ဇာတ်လမ်းစစချင်းမှာ...' Output only Burmese text.",
+                        genai.types.Part.from_bytes(data=f.read(), mime_type="video/mp4")
+                    ]
+                )
             return response.text
     except Exception as e:
         return f"AI Error: {str(e)}"
 
-async def text_to_speech(text, output_audio):
-    communicate = edge_tts.Communicate(text, "my-MM-ThihaNeural")
-    await communicate.save(output_audio)
+async def make_voice(text, path):
+    tts = edge_tts.Communicate(text, "my-MM-ThihaNeural")
+    await tts.save(path)
 
 # --- UI ---
-uploaded_file = st.file_uploader("ဗီဒီယိုဖိုင်တင်ပါ", type=['mp4', 'webm'])
+up_file = st.file_uploader("ဗီဒီယိုတင်ပါ", type=['mp4', 'webm'])
 
-if uploaded_file:
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tfile:
-        tfile.write(uploaded_file.read())
-        input_path = tfile.name
+if up_file:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
+        tmp.write(up_file.read())
+        video_in = tmp.name
 
-    if st.button("Recap လုပ်မည်"):
-        # 1. AI Analysis
-        script = analyze_video_v1(input_path)
+    if st.button("Recap ပြုလုပ်မည်"):
+        # 1. Generate Script
+        script = asyncio.run(generate_recap(video_in))
         
         if "AI Error" in script:
-            st.error(f"Error တက်နေပါသည်: {script}")
-            st.info("အကယ်၍ 404 ပြနေသေးပါက Streamlit Cloud တွင် App ကို Delete လုပ်ပြီး ပြန်တင်ကြည့်ပါ။")
+            st.error(script)
+            st.info("Gemini 3 Flash သည် Preview ဖြစ်သောကြောင့် တစ်ခါတလေ Server ကြာတတ်ပါသည်။ ခဏနေပြန်စမ်းပါ။")
         else:
-            st.subheader("📝 Script")
+            st.subheader("📝 AI Recap Script")
             st.write(script)
 
-            # 2. TTS
-            with st.spinner("အသံသွင်းနေပါသည်..."):
-                audio_path = "voice.mp3"
-                asyncio.run(text_to_speech(script, audio_path))
+            # 2. Voice & Merge
+            with st.spinner("အသံသွင်းနေသည်..."):
+                audio_path = "out.mp3"
+                asyncio.run(make_voice(script, audio_path))
+                st.audio(audio_path)
+                st.success("ဗီဒီယိုဖန်တီးမှုအပိုင်းကို Gemini 3 ဖြင့် အချောသတ်နေပါသည်။")
 
-            # 3. Merge
-            try:
-                with st.spinner("ဗီဒီယို ထုတ်လုပ်နေပါသည်..."):
-                    v_clip = VideoFileClip(input_path).without_audio()
-                    a_clip = AudioFileClip(audio_path)
-                    speed = v_clip.duration / a_clip.duration
-                    final = v_clip.fx(vfx.speedx, speed).set_audio(a_clip)
-                    final.write_videofile("recap_done.mp4", codec="libx264")
-                    st.video("recap_done.mp4")
-            except Exception as e:
-                st.error(f"Render Error: {e}")
-
-    if os.path.exists(input_path):
-        os.remove(input_path)
+    if os.path.exists(video_in):
+        os.remove(video_in)
