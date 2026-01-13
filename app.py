@@ -10,6 +10,7 @@ import tempfile
 import time
 
 # --- CONFIGURATION ---
+# သင့်ရဲ့ API Key ကို ဒီနေရာမှာ သေချာထည့်ထားပါတယ်
 GEMINI_API_KEY = "AIzaSyBDfSFCV4kF56dAZ8Zx0m0xaR8a40v8pG4"
 genai.configure(api_key=GEMINI_API_KEY)
 
@@ -18,31 +19,25 @@ st.set_page_config(page_title="Auto Burmese Movie Recap AI", layout="wide")
 # --- FUNCTIONS ---
 
 def adjust_video_sync(video_path, audio_path, output_path):
-    """ဗီဒီယိုကို အသံနဲ့ ကိုက်ညီအောင် ညှိနှိုင်းပေးခြင်း"""
     video_clip = VideoFileClip(video_path).without_audio()
     audio_clip = AudioFileClip(audio_path)
-    # အသံထက် ဗီဒီယိုက ပိုတိုနေရင်ဖြစ်ဖြစ်၊ ရှည်နေရင်ဖြစ်ဖြစ် အသံနဲ့ကိုက်အောင် speed ညှိမည်
     speed_factor = video_clip.duration / audio_clip.duration
     final_video = video_clip.fx(vfx.speedx, speed_factor).set_audio(audio_clip)
     final_video.write_videofile(output_path, codec="libx264", audio_codec="aac", fps=24)
     return output_path
 
 def apply_blur_to_video(video_path, output_path):
-    """Logo နှင့် Subtitle နေရာများကို Blur လုပ်ခြင်း"""
     cap = cv2.VideoCapture(video_path)
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     fps = cap.get(cv2.CAP_PROP_FPS) or 24
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-    
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret: break
-        # Top Right Logo Blur
         logo = frame[10:110, width-210:width-10]
         if logo.size > 0: frame[10:110, width-210:width-10] = cv2.GaussianBlur(logo, (51, 51), 0)
-        # Bottom Subtitle Blur
         sub = frame[height-140:height-10, 50:width-50]
         if sub.size > 0: frame[height-140:height-10, 50:width-50] = cv2.GaussianBlur(sub, (51, 51), 0)
         out.write(frame)
@@ -50,29 +45,27 @@ def apply_blur_to_video(video_path, output_path):
     return output_path
 
 async def generate_voice(text, output_path):
-    """မြန်မာအသံ ထုတ်လုပ်ခြင်း"""
     communicate = edge_tts.Communicate(text, "my-MM-ThihaNeural")
     await communicate.save(output_path)
 
 def analyze_and_recap(video_file_path):
-    """Gemini AI ဖြင့် ဗီဒီယိုကို နားထောင်ပြီး ဗမာလို ဇာတ်ညွှန်းရေးခြင်း"""
-    # Model နာမည်ကို ပိုမိုသေချာသော version သို့ ပြောင်းလဲထားသည်
-    model = genai.GenerativeModel('models/gemini-1.5-flash-latest')
+    """Gemini AI ကို သုံးပြီး ဗီဒီယိုကို နားထောင်ပြီး ဘာသာပြန်ခြင်း"""
+    # နာမည်ကို gemini-1.5-flash ဟုသာ ပြောင်းလဲသုံးစွဲသည်
+    model = genai.GenerativeModel('gemini-1.5-flash')
     
-    # ဗီဒီယိုဖိုင်ကို တင်ပို့ခြင်း
     st.write("📤 ဗီဒီယိုဖိုင်ကို AI ဆီ ပို့ဆောင်နေသည်...")
     video_file = genai.upload_file(path=video_file_path)
     
-    # AI က ဖိုင်ကို စစ်ဆေးပြီးချိန်အထိ ခေတ္တစောင့်ခြင်း
+    # AI က ဖိုင်ကို စစ်ဆေးနေစဉ် စောင့်ဆိုင်းရန်
     while video_file.state.name == "PROCESSING":
-        time.sleep(3)
+        time.sleep(2)
         video_file = genai.get_file(video_file.name)
 
     prompt = (
         "Watch this video and listen to the audio carefully. "
         "Summarize the story and translate any dialogue into a dramatic "
         "Burmese movie recap narration. Use a storytelling tone like 'ဇာတ်လမ်းစစချင်းမှာ...'. "
-        "Output ONLY the Burmese text. No English."
+        "Output ONLY the Burmese text. No English or other explanations."
     )
     
     response = model.generate_content([video_file, prompt])
@@ -85,7 +78,6 @@ st.info("ဗီဒီယိုတင်လိုက်ရုံဖြင့် A
 uploaded_file = st.file_uploader("ဗီဒီယိုဖိုင်တင်ပါ", type=['mp4', 'webm', 'mov', 'avi'])
 
 if uploaded_file:
-    # ယာယီဖိုင်အဖြစ် သိမ်းဆည်းခြင်း
     suffix = os.path.splitext(uploaded_file.name)[1]
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tfile:
         tfile.write(uploaded_file.read())
@@ -94,17 +86,17 @@ if uploaded_file:
     if st.button("အလိုအလျောက် Recap ပြုလုပ်ပါ"):
         with st.status("AI အလုပ်လုပ်နေသည်...", expanded=True) as status:
             try:
-                # 1. AI Scripting
-                st.write("🕵️ ဗီဒီယိုကို နားထောင်ပြီး ဘာသာပြန်နေသည် (ခဏစောင့်ပါ)...")
+                # 1. AI Analysis
+                st.write("🕵️ AI က ဗီဒီယိုကို နားထောင်ပြီး ဘာသာပြန်နေသည် (ခေတ္တစောင့်ပါ)...")
                 script = analyze_and_recap(temp_path)
                 st.success("ဇာတ်ညွှန်း ရရှိပါပြီ!")
                 
-                # 2. Voice
+                # 2. Voice Generation
                 st.write("🎙️ ဗမာအသံသွင်းနေသည်...")
                 asyncio.run(generate_voice(script, "voice.mp3"))
                 
-                # 3. Processing
-                st.write("🌫️ Logo Blur လုပ်ပြီး ဗီဒီယိုအသစ် ထုတ်လုပ်နေသည်...")
+                # 3. Video Processing
+                st.write("🌫️ Blur ပြုလုပ်ပြီး ဗီဒီယိုအသစ် ထုတ်လုပ်နေသည်...")
                 blurred = apply_blur_to_video(temp_path, "blurred.mp4")
                 final = adjust_video_sync(blurred, "voice.mp3", "final.mp4")
                 
