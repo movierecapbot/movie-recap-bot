@@ -7,64 +7,91 @@ import tempfile
 import time
 from moviepy.editor import VideoFileClip, AudioFileClip, vfx
 
-# --- CONFIG ---
+# --- INITIAL SETUP ---
 st.set_page_config(page_title="Burmese Movie Recap AI", layout="wide")
 st.title("🎬 Burmese Movie Recap AI")
 
-# API Setup
-GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "AIzaSyBDfSFCV4kF56dAZ8Zx0m0xaR8a40v8pG4")
-genai.configure(api_key=GEMINI_API_KEY)
+# Streamlit Secrets ကနေ Key ကို ယူခြင်း
+try:
+    if "GEMINI_API_KEY" in st.secrets:
+        GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
+        genai.configure(api_key=GEMINI_API_KEY)
+    else:
+        st.error("Secrets ထဲမှာ GEMINI_API_KEY ကို ရှာမတွေ့ပါ။")
+        st.stop()
+except Exception as e:
+    st.error(f"Config Error: {e}")
+    st.stop()
 
 # --- FUNCTIONS ---
-def get_ai_recap(video_path):
+def analyze_video_ai(video_path):
     try:
-        # Model နာမည်ကို models/ မပါဘဲ တိုက်ရိုက်ခေါ်ကြည့်ခြင်း
+        # Model နာမည်ကို အခြေခံအကျဆုံးပုံစံဖြင့် ခေါ်ဆိုခြင်း
         model = genai.GenerativeModel('gemini-1.5-flash')
         
-        with st.spinner("AI က ဗီဒီယိုကို ဖတ်နေသည်..."):
-            myfile = genai.upload_file(video_path)
+        with st.spinner("AI က ဗီဒီယိုကို လေ့လာနေသည်..."):
+            video_file = genai.upload_file(path=video_path)
             
-            # စောင့်ဆိုင်းခြင်း
-            while myfile.state.name == "PROCESSING":
+            # Processing ပြီးအောင် စောင့်ပါ
+            while video_file.state.name == "PROCESSING":
                 time.sleep(2)
-                myfile = genai.get_file(myfile.name)
+                video_file = genai.get_file(video_file.name)
             
-            prompt = "Translate this video content into a dramatic Burmese movie recap script. Start with 'ဇာတ်လမ်းစစချင်းမှာ...' Output only Burmese text."
-            response = model.generate_content([myfile, prompt])
+            if video_file.state.name == "FAILED":
+                return "AI Error: ဗီဒီယိုကို ဖတ်လို့မရပါ။"
+
+            prompt = "Translate this video content and write a dramatic Burmese movie recap script. Start with 'ဇာတ်လမ်းစစချင်းမှာ...' Output only Burmese text."
+            response = model.generate_content([video_file, prompt])
             return response.text
     except Exception as e:
         return f"AI Error: {str(e)}"
 
-async def make_voice(text, path):
-    tts = edge_tts.Communicate(text, "my-MM-ThihaNeural")
-    await tts.save(path)
+async def generate_burmese_voice(text, output_audio):
+    communicate = edge_tts.Communicate(text, "my-MM-ThihaNeural")
+    await communicate.save(output_audio)
 
 # --- UI ---
-up_file = st.file_uploader("ဗီဒီယိုတင်ပါ", type=['mp4', 'webm'])
+uploaded_file = st.file_uploader("ဗီဒီယိုဖိုင်တင်ပါ (MP4 or WEBM)", type=['mp4', 'webm'])
 
-if up_file:
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
-        tmp.write(up_file.read())
-        video_in = tmp.name
+if uploaded_file:
+    # ယာယီဖိုင်အဖြစ် သိမ်းဆည်းခြင်း
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tfile:
+        tfile.write(uploaded_file.read())
+        temp_input_path = tfile.name
 
-    if st.button("Recap လုပ်မည်"):
-        # 1. Script
-        script = get_ai_recap(video_in)
+    if st.button("Recap ပြုလုပ်မည်"):
+        # 1. AI ဇာတ်ညွှန်း ရယူခြင်း
+        script = analyze_video_ai(temp_input_path)
         
         if "AI Error" in script:
-            st.error(f"နည်းပညာအခက်အခဲရှိနေပါသည်- {script}")
-            st.info("အကြံပြုချက်- API Key အသစ်တစ်ခုဖြင့် စမ်းသပ်ကြည့်ပါ။")
+            st.error(script)
         else:
-            st.subheader("📝 Script")
-            st.write(script)
+            st.subheader("📝 AI ရေးပေးသော ဇာတ်ညွှန်း")
+            st.info(script)
 
-            # 2. Voice & Merge
-            with st.spinner("အသံသွင်းပြီး ဗီဒီယိုထုတ်လုပ်နေသည်..."):
-                asyncio.run(make_voice(script, "audio.mp3"))
-                
-                v_clip = VideoFileClip(video_in).without_audio()
-                a_clip = AudioFileClip("audio.mp3")
-                speed = v_clip.duration / a_clip.duration
-                final = v_clip.fx(vfx.speedx, speed).set_audio(a_clip)
-                final.write_videofile("done.mp4", codec="libx264")
-                st.video("done.mp4")
+            # 2. အသံဖိုင် ဖန်တီးခြင်း
+            with st.spinner("မြန်မာအသံဖိုင် ပြုလုပ်နေသည်..."):
+                audio_path = "recap_audio.mp3"
+                asyncio.run(generate_burmese_voice(script, audio_path))
+
+            # 3. ဗီဒီယိုနှင့် အသံကို ပေါင်းစပ်ခြင်း
+            with st.spinner("ဗီဒီယိုနှင့် အသံကို ညှိနေသည်..."):
+                try:
+                    video_clip = VideoFileClip(temp_input_path).without_audio()
+                    audio_clip = AudioFileClip(audio_path)
+                    
+                    # အသံအရှည်အတိုင်း ဗီဒီယိုမြန်နှုန်းကို ညှိပေးသည်
+                    speed_factor = video_clip.duration / audio_clip.duration
+                    final_clip = video_clip.fx(vfx.speedx, speed_factor).set_audio(audio_clip)
+                    
+                    final_video_name = "final_movie_recap.mp4"
+                    final_clip.write_videofile(final_video_name, codec="libx264", audio_codec="aac")
+                    
+                    st.success("အားလုံးပြီးပါပြီ။ အောက်မှာ ကြည့်နိုင်ပါတယ်။")
+                    st.video(final_video_name)
+                except Exception as ve:
+                    st.error(f"Render Error: {ve}")
+
+    # File Cleanup
+    if os.path.exists(temp_input_path):
+        os.remove(temp_input_path)
