@@ -11,89 +11,69 @@ from moviepy.editor import VideoFileClip, AudioFileClip, vfx
 st.set_page_config(page_title="Burmese Movie Recap AI", layout="wide")
 st.title("🎬 Burmese Movie Recap AI")
 
-# Get API Key
+# API Key - Secrets ထဲမှာ မရှိရင် အောက်က Key ကို သုံးမယ်
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "AIzaSyBDfSFCV4kF56dAZ8Zx0m0xaR8a40v8pG4")
+
+# ပြဿနာအရှိဆုံးဖြစ်တဲ့ API Version ကို Stable ဖြစ်တဲ့ v1 သို့ ပြောင်းလဲခြင်း
+os.environ["GOOGLE_GENERATIVE_AI_API_VERSION"] = "v1"
 genai.configure(api_key=GEMINI_API_KEY)
 
-# --- CORE FUNCTIONS ---
-def analyze_video_with_ai(video_path):
-    """ဗီဒီယိုကို AI ဆီပို့ပြီး ဇာတ်ညွှန်းတောင်းခြင်း"""
+def analyze_video(video_path):
     try:
-        # Version သတ်မှတ်ချက်ကို ဖြုတ်ပြီး အခြေခံအတိုင်း ခေါ်ယူခြင်း
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # Model Name ကို အတိအကျ ပြောင်းလဲထားပါသည်
+        model = genai.GenerativeModel(model_name='models/gemini-1.5-flash')
         
-        with st.spinner("AI က ဗီဒီယိုကို စစ်ဆေးနေသည်..."):
+        with st.spinner("AI က ဗီဒီယိုကို စစ်ဆေးနေပါသည်..."):
             video_file = genai.upload_file(path=video_path)
             
-            # Processing ပြီးအောင်စောင့်ပါ
             while video_file.state.name == "PROCESSING":
                 time.sleep(2)
                 video_file = genai.get_file(video_file.name)
             
             if video_file.state.name == "FAILED":
-                return "Video processing failed on server."
+                return "Video processing failed."
 
-            prompt = "Watch this video and write a dramatic Burmese movie recap script. Start with 'ဇာတ်လမ်းစစချင်းမှာ...' Burmese language only."
+            prompt = "ဇာတ်လမ်းစစချင်းမှာ... ဆိုတဲ့ စကားလုံးနဲ့ စတင်ပြီး ဒီဗီဒီယိုကို စိတ်ဝင်စားစရာကောင်းအောင် မြန်မာလို Movie Recap ဇာတ်ညွှန်း ရေးပေးပါ။"
             response = model.generate_content([video_file, prompt])
             return response.text
     except Exception as e:
-        return f"AI Error: {str(e)}"
+        return f"Error: {str(e)}"
 
-async def text_to_speech(text, output_audio):
-    """မြန်မာအသံဖိုင် ပြောင်းလဲခြင်း"""
+async def generate_voice(text, output_path):
     communicate = edge_tts.Communicate(text, "my-MM-ThihaNeural")
-    await communicate.save(output_audio)
+    await communicate.save(output_path)
 
-def create_final_video(video_in, audio_in, video_out):
-    """အသံနှင့် ဗီဒီယို ပေါင်းစပ်ခြင်း"""
-    try:
-        v_clip = VideoFileClip(video_in).without_audio()
-        a_clip = AudioFileClip(audio_in)
-        # အသံအရှည်အတိုင်း ဗီဒီယိုအမြန်နှုန်းကို ညှိပေးပါသည်
-        speed = v_clip.duration / a_clip.duration
-        final = v_clip.fx(vfx.speedx, speed).set_audio(a_clip)
-        final.write_videofile(video_out, codec="libx264", audio_codec="aac")
-        return True
-    except Exception as e:
-        st.error(f"Render Error: {e}")
-        return False
-
-# --- UI LOGIC ---
-uploaded_file = st.file_uploader("ဗီဒီယိုဖိုင်တင်ပါ (MP4, WEBM)", type=['mp4', 'webm'])
+# --- UI ---
+uploaded_file = st.file_uploader("ဗီဒီယိုဖိုင်တင်ပါ", type=['mp4', 'webm', 'mov'])
 
 if uploaded_file:
-    # ယာယီဖိုင် သိမ်းဆည်းခြင်း
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tfile:
         tfile.write(uploaded_file.read())
         input_path = tfile.name
 
-    if st.button("Recap ပြုလုပ်မည်"):
-        # 1. AI Analysis
-        script = analyze_video_with_ai(input_path)
+    if st.button("Recap လုပ်မည်"):
+        # 1. Script
+        script_text = analyze_video(input_path)
         
-        if "AI Error" in script:
-            st.error(script)
-            # အကယ်၍ Flash model မရပါက Pro model နဲ့ ထပ်စမ်းကြည့်ခြင်း
-            st.info("Trying Pro model as backup...")
-            model_pro = genai.GenerativeModel('gemini-1.5-pro')
-            video_file_retry = genai.upload_file(path=input_path)
-            # (Wait logic removed for brevity but same as above)
-            response = model_pro.generate_content([video_file_retry, "Write Burmese movie recap."])
-            script = response.text
+        if "Error" in script_text:
+            st.error(f"AI က အဆင်မပြေဖြစ်နေပါသည်: {script_text}")
+        else:
+            st.subheader("📝 Recap Script (Burmese)")
+            st.write(script_text)
 
-        st.subheader("📝 AI Generated Script")
-        st.write(script)
-
-        # 2. Voice Generation
-        with st.spinner("မြန်မာအသံဖိုင် ဖန်တီးနေသည်..."):
-            asyncio.run(text_to_speech(script, "temp_audio.mp3"))
-
-        # 3. Video Processing
-        with st.spinner("ဗီဒီယို ထုတ်လုပ်နေသည်..."):
-            if create_final_video(input_path, "temp_audio.mp3", "final_video.mp4"):
-                st.success("အားလုံးပြီးစီးပါပြီ!")
-                st.video("final_video.mp4")
-
-    # Clean up
-    if os.path.exists(input_path):
-        os.remove(input_path)
+            # 2. Voice
+            with st.spinner("အသံဖိုင် ပြောင်းလဲနေသည်..."):
+                asyncio.run(generate_voice(script_text, "voice.mp3"))
+            
+            # 3. Final Video
+            try:
+                with st.spinner("ဗီဒီယို ပေါင်းစပ်နေသည်..."):
+                    v_clip = VideoFileClip(input_path).without_audio()
+                    a_clip = AudioFileClip("voice.mp3")
+                    # Speed adjustment
+                    speed = v_clip.duration / a_clip.duration
+                    final_video = v_clip.fx(vfx.speedx, speed).set_audio(a_clip)
+                    final_video.write_videofile("recap_done.mp4", codec="libx264")
+                    st.video("recap_done.mp4")
+            except Exception as e:
+                st.error(f"Video Merge Error: {e}")
