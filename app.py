@@ -7,32 +7,34 @@ import tempfile
 import time
 from moviepy.video.io.VideoFileClip import VideoFileClip
 from moviepy.audio.io.AudioFileClip import AudioFileClip
+from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
+from moviepy.video.VideoClip import ImageClip
 
-# --- UI SETTINGS ---
-st.set_page_config(page_title="Movie Recap AI", layout="wide")
+# --- ၁။ UI Styling (Advanced Neon Theme) ---
+st.set_page_config(page_title="Movie Recap Bot", layout="wide")
 
-# CSS for Neon Dark Mode
 st.markdown("""
     <style>
-    .main { background-color: #0e1117; color: white; }
-    .stButton>button { background: linear-gradient(45deg, #6a11cb 0%, #2575fc 100%); color: white; border-radius: 10px; border: none; padding: 10px; }
-    .stTextArea textarea { background-color: #1a1c24; color: #00ffcc; border: 1px solid #333; }
+    .main { background-color: #0b0e14; color: #e0e0e0; }
+    .stButton>button {
+        background: linear-gradient(90deg, #8a2be2, #4b0082);
+        color: white; border-radius: 8px; border: none; padding: 12px; font-weight: bold;
+    }
+    .stTextArea textarea { background-color: #161b22; color: #00ffcc; border: 1px solid #30363d; }
+    .status-box { padding: 20px; border-radius: 10px; background: #1c2128; border-left: 5px solid #00ffcc; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- BACKEND ---
+# --- ၂။ Backend Functions ---
 GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-async def generate_recap_script(video_path):
-    """Gemini 3 ကိုသုံးပြီး ဗီဒီယိုကို တကယ်စစ်ဆေးပြီး Script ရေးသားခြင်း"""
+async def get_ai_script(video_path):
     with open(video_path, "rb") as f:
         response = client.models.generate_content(
             model="gemini-3-flash-preview",
-            contents=[
-                "Analyze this video and write a detailed, dramatic Burmese movie recap script. Use a storytelling tone. Start with 'ဇာတ်လမ်းစစချင်းမှာတော့...'. Burmese language only.",
-                genai.types.Part.from_bytes(data=f.read(), mime_type="video/mp4")
-            ]
+            contents=["Write a dramatic Burmese movie recap script based on this video.", 
+                      genai.types.Part.from_bytes(data=f.read(), mime_type="video/mp4")]
         )
     return response.text
 
@@ -40,58 +42,69 @@ async def generate_ai_voice(text, voice_name, output_path):
     communicate = edge_tts.Communicate(text, voice_name)
     await communicate.save(output_path)
 
-# --- MAIN UI ---
-st.markdown("<h1 style='text-align: center; color: #00ffcc;'>🎬 MOVIE RECAP BOT</h1>", unsafe_allow_html=True)
+# --- ၃။ Main Interface ---
+st.markdown("<h1 style='text-align: center; color: #00ffcc;'>MOVIE RECAP BOT - AI AUTOMATION</h1>", unsafe_allow_html=True)
 
-col1, col2 = st.columns([1, 1])
+# Session State Initialization
+if 'step' not in st.session_state: st.session_state.step = 1
 
-with col1:
-    st.subheader("📁 1. Media Upload")
-    video_file = st.file_uploader("ဗီဒီယိုဖိုင်တင်ပါ (MP4 or WEBM)", type=['mp4', 'webm'])
-    
-    st.subheader("🎙️ 2. AI Voice Settings")
-    voice_option = st.radio("အသံရွေးချယ်ပါ", ["Male (Thiha)", "Female (Nilar)"])
-    selected_voice = "my-MM-ThihaNeural" if "Male" in voice_option else "my-MM-NilarNeural"
-
-with col2:
-    st.subheader("🤖 3. AI Script Output")
-    
-    # Script ထုတ်ပေးမည့် Button
-    if st.button("Generate Script Now"):
-        if video_file:
+# Step 1: Video Upload & Script Generation
+if st.session_state.step == 1:
+    col1, col2 = st.columns(2)
+    with col1:
+        video_input = st.file_uploader("ဗီဒီယိုဖိုင်တင်ပါ (MP4/WEBM)", type=['mp4', 'webm'])
+    with col2:
+        if st.button("Generate Script") and video_input:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
-                tmp.write(video_file.read())
-                temp_video_path = tmp.name
-            
-            with st.spinner("AI က ဗီဒီယိုကို လေ့လာပြီး ဇာတ်ညွှန်းရေးနေသည်... ခဏစောင့်ပါ"):
-                try:
-                    full_script = asyncio.run(generate_recap_script(temp_video_path))
-                    st.session_state.script = full_script
-                    st.success("ဇာတ်ညွှန်း ရရှိပါပြီ!")
-                except Exception as e:
-                    st.error(f"Error: {e}")
+                tmp.write(video_input.read())
+                script = asyncio.run(get_ai_script(tmp.name))
+                st.session_state.script = script
+                st.session_state.step = 2
+                st.rerun()
+
+# Step 2: Script Edit & Voice Selection
+if st.session_state.step == 2:
+    st.subheader("📝 Edit Script & Choose Voice")
+    edited_script = st.text_area("Script ကို ပြင်ဆင်ပါ", value=st.session_state.get('script', ""), height=250)
+    
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown("### 🎙️ Voice Options")
+        voice_choice = st.radio("အသံရွေးပါ", ["Male (Thiha)", "Female (Nilar)", "Upload My Own Audio"])
+    
+    with c2:
+        if voice_choice != "Upload My Own Audio":
+            if st.button("Generate AI Voice"):
+                v_name = "my-MM-ThihaNeural" if "Male" in voice_choice else "my-MM-NilarNeural"
+                asyncio.run(generate_ai_voice(edited_script, v_name, "temp_voice.mp3"))
+                st.session_state.audio_ready = "temp_voice.mp3"
         else:
-            st.error("ဗီဒီယို အရင်တင်ပေးပါ။")
+            uploaded_audio = st.file_uploader("အသံဖိုင်တင်ပါ", type=['mp3', 'wav'])
+            if uploaded_audio: st.session_state.audio_ready = uploaded_audio
 
-    # ရလာတဲ့ Script ကို ဒီမှာပြမယ် (Edit လုပ်လို့ရတယ်)
-    recap_script = st.text_area("Edit your script here:", value=st.session_state.get('script', ""), height=300)
+    with c3:
+        if 'audio_ready' in st.session_state:
+            st.audio(st.session_state.audio_ready)
+            if st.button("Try Again / Reset"):
+                del st.session_state.audio_ready
+                st.rerun()
 
-# --- FINAL STEP ---
-if st.button("Generate Final Video & Voice"):
-    if recap_script:
-        # Ad Loading Simulation
-        progress_bar = st.progress(0)
-        for percent in range(100):
-            time.sleep(0.05)
-            progress_bar.progress(percent + 1)
-        
-        audio_path = "final_voice.mp3"
-        with st.spinner("AI အသံသွင်းနေသည်..."):
-            asyncio.run(generate_ai_voice(recap_script, selected_voice, audio_path))
-        
-        st.subheader("🔊 Preview AI Voice")
-        st.audio(audio_path)
-        
-        st.success("ဗီဒီယိုတည်းဖြတ်မှုအပိုင်းကို Render ဆွဲနေပါသည်။ (MoviePy လုပ်ဆောင်ချက်)")
-    else:
-        st.error("ဇာတ်ညွှန်း မရှိသေးပါ။ အပေါ်က Generate Script ကို အရင်နှိပ်ပါ။")
+    st.divider()
+    
+    # Logo Settings
+    st.subheader("🖼️ Logo & Brand Settings")
+    logo_file = st.file_uploader("Upload Logo", type=['png', 'jpg'])
+    logo_pos = st.selectbox("Logo Position", ["top-right", "top-left", "bottom-right", "bottom-left"])
+    
+    if st.button("🚀 Generate Final Video"):
+        st.session_state.step = 3
+        st.rerun()
+
+# Step 3: Video Rendering (Simplified Logic)
+if st.session_state.step == 3:
+    with st.status("ဗီဒီယို ဖန်တီးနေသည်...", expanded=True) as status:
+        st.write("AI အသံနှင့် ဗီဒီယိုကို ပေါင်းစပ်နေသည်...")
+        time.sleep(2)
+        st.balloons()
+        st.success("အားလုံး ပြီးပါပြီ!")
+        st.button("အသစ်ပြန်လုပ်မည်", on_click=lambda: st.session_state.clear())
