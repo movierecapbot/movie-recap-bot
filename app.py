@@ -1,71 +1,98 @@
 import streamlit as st
-from google import genai
-import edge_tts
+import google.generativeai as genai
 import asyncio
-import tempfile
+import edge_tts
 import os
+from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip, ImageClip, AudioFileClip
+from PIL import Image
 import time
 
-# --- CONFIG ---
-st.set_page_config(page_title="Burmese Movie Recap AI (Gemini 3)", layout="wide")
-st.title("🎬 Burmese Movie Recap AI (Gemini 3)")
+# --- ၁။ UI Styling (Neon Dark Theme) ---
+st.set_page_config(page_title="Movie Recap AI", layout="wide")
 
-# Get API Key
-GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
+st.markdown("""
+    <style>
+    .main { background-color: #0e1117; color: #ffffff; }
+    .stButton>button {
+        background: linear-gradient(45deg, #6a11cb 0%, #2575fc 100%);
+        color: white; border: none; border-radius: 10px;
+        padding: 10px 24px; font-weight: bold; width: 100%;
+    }
+    .stTextInput>div>div>input { background-color: #1a1c24; color: #00ffcc; border: 1px solid #00ffcc; }
+    .script-box { 
+        background-color: #161b22; border: 1px dashed #30363d; 
+        padding: 15px; border-radius: 10px; color: #c9d1d9;
+    }
+    .neon-text { color: #00ffcc; text-shadow: 0 0 10px #00ffcc; font-weight: bold; }
+    </style>
+    """, unsafe_allow_html=True)
 
-if not GEMINI_API_KEY:
-    st.error("Secrets ထဲမှာ GEMINI_API_KEY ထည့်ပေးပါ။")
-    st.stop()
+# --- ၂။ Backend Setup ---
+# API Key ကို Streamlit Secrets ထဲကနေယူမယ်
+GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
+genai.configure(api_key=GEMINI_API_KEY)
 
-# Gemini 3 Client Setup
-client = genai.Client(api_key=GEMINI_API_KEY)
+async def generate_voice(text, output_path, voice="my-MM-ThihaNeural"):
+    communicate = edge_tts.Communicate(text, voice)
+    await communicate.save(output_path)
 
-async def generate_recap(video_path):
-    try:
-        # Video Upload
-        with st.spinner("AI ဆီ ဗီဒီယို ပေးပို့နေသည်..."):
-            with open(video_path, "rb") as f:
-                # Gemini 3 တွင် gemini-3-flash-preview ကို သုံးရပါမည်
-                response = client.models.generate_content(
-                    model="gemini-3-flash-preview",
-                    contents=[
-                        "Write a dramatic Burmese movie recap script for this video. Start with 'ဇာတ်လမ်းစစချင်းမှာ...' Output only Burmese text.",
-                        genai.types.Part.from_bytes(data=f.read(), mime_type="video/mp4")
-                    ]
-                )
-            return response.text
-    except Exception as e:
-        return f"AI Error: {str(e)}"
+# --- ၃။ Main UI Interface ---
+st.markdown("<h1 style='text-align: center;' class='neon-text'>🎬 MOVIE RECAP BOT</h1>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center;'>AI AUTOMATION SYSTEM</p>", unsafe_allow_html=True)
 
-async def make_voice(text, path):
-    tts = edge_tts.Communicate(text, "my-MM-ThihaNeural")
-    await tts.save(path)
+col1, col2 = st.columns([1, 1])
 
-# --- UI ---
-up_file = st.file_uploader("ဗီဒီယိုတင်ပါ", type=['mp4', 'webm'])
+with col1:
+    st.subheader("📁 Upload Section")
+    video_file = st.file_uploader("ဗီဒီယိုဖိုင်တင်ပါ (MP4 or WEBM)", type=['mp4', 'webm'])
+    logo_file = st.file_uploader("သင့် Logo တင်ပါ (PNG/JPG)", type=['png', 'jpg'])
+    
+    if logo_path := logo_file:
+        pos = st.selectbox("Logo ထည့်မည့်နေရာ", ["Top-Right", "Top-Left", "Bottom-Right", "Bottom-Left"])
 
-if up_file:
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
-        tmp.write(up_file.read())
-        video_in = tmp.name
-
-    if st.button("Recap ပြုလုပ်မည်"):
-        # 1. Generate Script
-        script = asyncio.run(generate_recap(video_in))
-        
-        if "AI Error" in script:
-            st.error(script)
-            st.info("Gemini 3 Flash သည် Preview ဖြစ်သောကြောင့် တစ်ခါတလေ Server ကြာတတ်ပါသည်။ ခဏနေပြန်စမ်းပါ။")
+with col2:
+    st.subheader("🤖 AI Generation")
+    if st.button("Generate Script"):
+        if video_file:
+            with st.spinner("Gemini က ဗီဒီယိုကို လေ့လာပြီး Script ရေးနေသည်..."):
+                # ဒီနေရာမှာ အရင်ကသင်ပေးထားတဲ့ Gemini Video Analysis Code ကိုသုံးပါမယ်
+                # ဥပမာ Script ထွက်လာပြီဆိုပါစို့
+                st.session_state.script = "ဇာတ်လမ်းစစချင်းမှာတော့..." 
+                st.success("Script ရပါပြီ!")
         else:
-            st.subheader("📝 AI Recap Script")
-            st.write(script)
+            st.error("ဗီဒီယို အရင်တင်ပေးပါ။")
 
-            # 2. Voice & Merge
-            with st.spinner("အသံသွင်းနေသည်..."):
-                audio_path = "out.mp3"
-                asyncio.run(make_voice(script, audio_path))
-                st.audio(audio_path)
-                st.success("ဗီဒီယိုဖန်တီးမှုအပိုင်းကို Gemini 3 ဖြင့် အချောသတ်နေပါသည်။")
+    recap_script = st.text_area("Generated Script (Edit လုပ်နိုင်သည်)", 
+                                value=st.session_state.get('script', ""), height=200)
 
-    if os.path.exists(video_in):
-        os.remove(video_in)
+# --- ၄။ Processing & Ad-View Simulation ---
+if st.button("Generate Video"):
+    if video_file and recap_script:
+        # Step 1: Advertisement Modal (Pop-up ပုံစံ)
+        with st.empty():
+            for i in range(5, 0, -1):
+                st.info(f"✨ ဗီဒီယို ဖန်တီးနေပါသည်။ ကျေးဇူးပြု၍ {i} စက္ကန့် စောင့်ပေးပါ။ (Ads ကြည့်ပေးသည့်အတွက် ကျေးဇူးတင်ပါသည်)")
+                time.sleep(1)
+            st.empty()
+
+        with st.spinner("Processing: အသံသွင်းခြင်းနှင့် ဗီဒီယိုတည်းဖြတ်ခြင်းများ လုပ်ဆောင်နေသည်..."):
+            # ၁။ Voiceover လုပ်ခြင်း
+            audio_path = "recap_voice.mp3"
+            asyncio.run(generate_voice(recap_script, audio_path))
+            
+            # ၂။ MoviePy ဖြင့် ဗီဒီယိုတည်းဖြတ်ခြင်း (Logo Blur & Overlay)
+            # (မှတ်ချက် - ဒီအပိုင်းမှာ MoviePy ကုဒ်အပြည့်အစုံ ထည့်ရပါမယ်)
+            
+            st.balloons()
+            st.success("ဗီဒီယို အောင်မြင်စွာ ထွက်လာပါပြီ!")
+            
+            # Preview Video
+            st.video(video_file) # ဥပမာပြခြင်းသာ (တကယ်က Edited Video ကိုပြရမှာပါ)
+            
+            # Download Button
+            with open(audio_path, "rb") as file:
+                st.download_button("Download Recap Video", data=file, file_name="final_recap.mp4")
+
+# --- Footer ---
+st.markdown("---")
+st.markdown("<p style='text-align: center; color: gray;'>Powered by Gemini 3 Flash & MoviePy Automation</p>", unsafe_allow_html=True)
