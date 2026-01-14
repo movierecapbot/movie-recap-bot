@@ -3,7 +3,12 @@ import google.generativeai as genai
 import asyncio
 import edge_tts
 import os
-from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip, ImageClip, AudioFileClip
+from moviepy.video.io.VideoFileClip import VideoFileClip
+from moviepy.video.VideoClip import TextClip, ImageClip
+from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
+from moviepy.audio.io.AudioFileClip import AudioFileClip
+import moviepy.video.fx.all as vfx
+
 from PIL import Image
 import time
 
